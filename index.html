@@ -274,7 +274,7 @@
   <div class="page active" id="page-cal">
     <div class="topbar">
       <i class="ti ti-calendar" style="color:#fff;font-size:20px"></i>
-      <h1>Maa Gayatri Hosiery</h1>
+      <h1>Attendance Tracker</h1>
     </div>
     <div class="sync-bar" id="sync-bar-btn" style="cursor:pointer" title="Tap to sync now">
       <div class="sync-dot syncing" id="sync-dot"></div>
@@ -477,88 +477,34 @@ async function apiCall(params) {
   if (!SCRIPT_URL) throw new Error('No script URL');
   params._ts = Date.now();
 
-  // For save actions that carry large data, POST via form to avoid URL length limits
-  // For load actions, GET is fine
-  const isSaveAction = params.action && params.action.startsWith('save');
-
-  if (isSaveAction) {
-    return await postCall(params);
-  } else {
-    return await getCall(params);
-  }
+  const isSave = params.action && params.action.startsWith('save');
+  return isSave ? await postCall(params) : await getCall(params);
 }
 
-// GET call — for loading data
+// GET — for loading (small response, no body needed)
 async function getCall(params) {
   const url = SCRIPT_URL + '?' + new URLSearchParams(params).toString();
-  try {
-    const res  = await fetch(url, { method: 'GET', redirect: 'follow', cache: 'no-store' });
-    const text = await res.text();
-    return JSON.parse(text);
-  } catch(e) {
-    // Fallback to JSONP if fetch fails (CORS issue)
-    return await jsonpCall(SCRIPT_URL, params);
-  }
+  const res  = await fetch(url, { method:'GET', redirect:'follow', cache:'no-store' });
+  const text = await res.text();
+  const clean = text.replace(/^[^(]+\(/, '').replace(/\)\s*;?\s*$/, '').trim();
+  try { return JSON.parse(clean); }
+  catch(e) { console.error('Bad response:', text.substring(0,300)); throw new Error('Invalid response'); }
 }
 
-// POST via hidden form — bypasses CORS and URL length limits for save actions
-function postCall(params) {
-  return new Promise((resolve, reject) => {
-    const cbName  = '_cb_' + Date.now();
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error('Save timed out — check your Script URL'));
-    }, 20000);
-
-    // Listen for response via JSONP callback
-    window[cbName] = function(data) { cleanup(); resolve(data); };
-
-    function cleanup() {
-      clearTimeout(timeout);
-      delete window[cbName];
-      const f = document.getElementById('_hidden_form');
-      if (f) f.remove();
-      const s = document.getElementById('_jsonp_script');
-      if (s) s.remove();
-    }
-
-    // Build URL with callback — Apps Script will wrap response in callback()
-    const getParams = { action: params.action, _ts: params._ts, callback: cbName };
-    if (params.data) getParams.data = params.data;
-
-    const script = document.createElement('script');
-    script.id = '_jsonp_script';
-    script.src = SCRIPT_URL + '?' + new URLSearchParams(getParams).toString();
-    script.onerror = () => { cleanup(); reject(new Error('Failed to reach Apps Script')); };
-    document.head.appendChild(script);
+// POST — for saving (sends data in request body, no URL length limit)
+async function postCall(params) {
+  const body = new URLSearchParams(params).toString();
+  const res  = await fetch(SCRIPT_URL, {
+    method:   'POST',
+    redirect: 'follow',
+    cache:    'no-store',
+    headers:  { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body:     body
   });
-}
-
-// JSONP GET — for load actions when fetch fails due to CORS
-function jsonpCall(baseUrl, params) {
-  return new Promise((resolve, reject) => {
-    const cbName  = '_cb_' + Date.now();
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error('Request timed out'));
-    }, 15000);
-
-    window[cbName] = function(data) { cleanup(); resolve(data); };
-
-    function cleanup() {
-      clearTimeout(timeout);
-      delete window[cbName];
-      const s = document.getElementById('_jsonp_script_get');
-      if (s) s.remove();
-    }
-
-    const p = { ...params, callback: cbName };
-    const script = document.createElement('script');
-    script.id  = '_jsonp_script_get';
-    script.src = baseUrl + '?' + new URLSearchParams(p).toString();
-    script.onerror = () => { cleanup(); reject(new Error('Failed to reach Apps Script')); };
-    document.head.appendChild(script);
-  });
+  const text = await res.text();
+  const clean = text.replace(/^[^(]+\(/, '').replace(/\)\s*;?\s*$/, '').trim();
+  try { return JSON.parse(clean); }
+  catch(e) { console.error('Bad POST response:', text.substring(0,300)); throw new Error('Invalid response'); }
 }
 
 async function loadAllFromSheets() {
