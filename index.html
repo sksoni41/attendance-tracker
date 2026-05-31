@@ -287,9 +287,21 @@
       <input type="text" id="script-url-input" placeholder="https://script.google.com/macros/s/...">
       <button onclick="saveScriptUrl()">Save &amp; Connect</button>
     </div>
-    <div class="error-banner" id="error-banner">
-      ⚠ Could not reach Google Sheets. Check your Script URL or internet connection.
-      <br><a href="#" onclick="document.getElementById('setup-banner').style.display='block';return false;" style="color:#A32D2D;font-weight:600">Update Script URL</a>
+    <div class="error-banner" id="error-banner" style="display:none">
+      <div id="error-detail">⚠ Could not reach Google Sheets.</div>
+      <div style="display:flex;gap:10px;margin-top:8px;flex-wrap:wrap">
+        <a href="#" onclick="showDebugPanel();return false;" style="color:#A32D2D;font-weight:600;font-size:11px">🔍 Run Diagnostics</a>
+        <a href="#" onclick="resetUrl();return false;"       style="color:#A32D2D;font-weight:600;font-size:11px">✏️ Change URL</a>
+        <a href="#" onclick="silentSync();return false;"     style="color:#A32D2D;font-weight:600;font-size:11px">🔄 Retry</a>
+      </div>
+    </div>
+    <!-- Debug panel — shows step-by-step what's failing -->
+    <div id="debug-panel" style="display:none;margin:0 12px 12px;padding:12px;background:#1e1e2e;border-radius:10px;font-family:monospace;font-size:11px;color:#cdd6f4;max-height:220px;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="color:#a6e3a1;font-weight:600">🔍 Diagnostics</span>
+        <a href="#" onclick="document.getElementById('debug-panel').style.display='none';return false;" style="color:#6c7086;font-size:10px">close</a>
+      </div>
+      <div id="debug-log"></div>
     </div>
     <div class="cal-nav">
       <button id="prev-month">&#8249;</button>
@@ -463,9 +475,22 @@ function showPage(id) {
 // ═══════════════════════════════════════════════
 async function apiCall(params) {
   if (!SCRIPT_URL) throw new Error('No script URL');
-  const res = await fetch(SCRIPT_URL + '?' + new URLSearchParams(params).toString(), { redirect: 'follow' });
+  // Add timestamp to bust browser cache — critical for multi-device sync
+  params._ts = Date.now();
+  const url = SCRIPT_URL + '?' + new URLSearchParams(params).toString();
+  const res = await fetch(url, {
+    redirect: 'follow',
+    cache: 'no-store',      // never use cached response
+    headers: { 'Cache-Control': 'no-cache, no-store' }
+  });
   if (!res.ok) throw new Error('HTTP ' + res.status);
-  return res.json();
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch(e) {
+    console.error('Bad JSON from Apps Script:', text);
+    throw new Error('Invalid response from server');
+  }
 }
 
 async function loadAllFromSheets() {
@@ -488,25 +513,13 @@ async function loadAllFromSheets() {
     // Load logs
     showLoading(true, 'Loading attendance logs...');
     const logRes = await apiCall({ action: 'loadLogs' });
-    state.logs = {};
-    if (logRes.rows && logRes.rows.length > 0) {
-      logRes.rows.forEach(row => {
-        const date      = String(row[0]||'').trim();
-        const empName   = String(row[1]||'').trim();
-        const hours     = String(row[2]||'').trim();
-        const leave     = String(row[3]||'').trim();
-        if (!date || !empName) return;
-        if (!state.logs[date]) {
-          state.logs[date] = {};
-          EMPLOYEES.forEach(e => { state.logs[date][e.name] = { hours:'', leave:'' }; });
-        }
-        state.logs[date][empName] = { hours, leave };
-      });
-    }
+    parseLogRows(logRes?.rows);
     setSyncStatus('ok', 'Synced ✓  ' + new Date().toLocaleTimeString());
   } catch(err) {
-    console.error(err);
-    setSyncStatus('error', 'Sync failed — showing offline data');
+    console.error('loadAllFromSheets error:', err);
+    const msg = err.message || 'Unknown error';
+    setSyncStatus('error', 'Failed: ' + msg.substring(0,40));
+    document.getElementById('error-detail').textContent = '⚠ ' + msg;
     document.getElementById('error-banner').style.display = 'block';
   }
   showLoading(false);
@@ -523,12 +536,19 @@ async function saveAllToSheets() {
       EMPLOYEES.forEach(emp => {
         const l = state.logs[dk] && state.logs[dk][emp.name];
         if (!l) return;
-        const h = getHours(l);
+        const h       = getHours(l);
         const isLeave = l.leave === 'leave';
-        // Save row if hours > 0 OR employee is on leave
+        // Save the row if: hours > 0 OR on leave OR explicitly cleared
+        // We always send rows that have ANY record so sheet stays in sync
         if (h > 0 || isLeave) {
           rows.push([dk, emp.name, h || 0, Math.round(h * emp.rate), l.leave || '']);
+        } else {
+          // hours = 0 and not on leave — send a blank row so Apps Script
+          // knows to DELETE this entry from the sheet
+          rows.push([dk, emp.name, '', '', '']);
         }
+      });
+    });
       });
     });
     await apiCall({ action: 'saveLogs', data: JSON.stringify(rows) });
@@ -936,20 +956,146 @@ function countWorkdays(year, month) {
 }
 
 // ═══════════════════════════════════════════════
-// AUTO-SYNC — polls Google Sheets every 30 sec
-// so PC and mobile always stay in sync
+// DEBUG & URL HELPERS
 // ═══════════════════════════════════════════════
-let autoSyncInterval = null;
-let isSyncing        = false;
+function resetUrl() {
+  document.getElementById('script-url-input').value = SCRIPT_URL;
+  document.getElementById('setup-banner').style.display = 'block';
+}
+
+function dbgLog(msg, color) {
+  const el = document.getElementById('debug-log');
+  if (!el) return;
+  const line = document.createElement('div');
+  line.style.color = color || '#cdd6f4';
+  line.style.marginBottom = '3px';
+  line.textContent = new Date().toLocaleTimeString() + '  ' + msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+async function showDebugPanel() {
+  const panel = document.getElementById('debug-panel');
+  panel.style.display = 'block';
+  document.getElementById('debug-log').innerHTML = '';
+
+  dbgLog('Starting diagnostics...', '#89b4fa');
+
+  // Step 1 — check URL is saved
+  if (!SCRIPT_URL) {
+    dbgLog('❌ No Script URL saved. Paste your URL in the box above.', '#f38ba8');
+    return;
+  }
+  dbgLog('✓ Script URL found in browser storage', '#a6e3a1');
+  dbgLog('  URL: ' + SCRIPT_URL.substring(0, 60) + '...', '#6c7086');
+
+  // Step 2 — check URL format
+  if (!SCRIPT_URL.startsWith('https://script.google.com/macros/s/')) {
+    dbgLog('❌ URL format wrong. Must start with https://script.google.com/macros/s/', '#f38ba8');
+    return;
+  }
+  if (!SCRIPT_URL.endsWith('/exec')) {
+    dbgLog('❌ URL must end with /exec  — yours ends with: ' + SCRIPT_URL.slice(-10), '#f38ba8');
+    return;
+  }
+  dbgLog('✓ URL format looks correct', '#a6e3a1');
+
+  // Step 3 — try a ping
+  dbgLog('⏳ Pinging Apps Script...', '#f9e2af');
+  try {
+    const pingUrl = SCRIPT_URL + '?_ts=' + Date.now();
+    const res = await fetch(pingUrl, { redirect: 'follow', cache: 'no-store' });
+    dbgLog('✓ Got HTTP ' + res.status + ' response', '#a6e3a1');
+    const text = await res.text();
+    dbgLog('  Raw response: ' + text.substring(0, 120), '#6c7086');
+
+    // Step 4 — check JSON is parseable
+    try {
+      JSON.parse(text);
+      dbgLog('✓ Response is valid JSON', '#a6e3a1');
+    } catch(e) {
+      dbgLog('❌ Response is NOT valid JSON — Apps Script may have an error', '#f38ba8');
+      dbgLog('  Tip: Open Script URL in browser tab to see the error', '#fab387');
+      return;
+    }
+
+    // Step 5 — try loadEmployees
+    dbgLog('⏳ Testing loadEmployees...', '#f9e2af');
+    const empUrl = SCRIPT_URL + '?action=loadEmployees&_ts=' + Date.now();
+    const empRes = await fetch(empUrl, { redirect: 'follow', cache: 'no-store' });
+    const empText = await empRes.text();
+    dbgLog('  loadEmployees response: ' + empText.substring(0, 120), '#6c7086');
+    const empJson = JSON.parse(empText);
+    if (empJson.error) {
+      dbgLog('❌ Apps Script returned error: ' + empJson.error, '#f38ba8');
+      dbgLog('  Tip: Check your SHEET_ID in Apps Script', '#fab387');
+    } else {
+      dbgLog('✓ loadEmployees works! Found ' + (empJson.employees||[]).length + ' employees', '#a6e3a1');
+      dbgLog('🎉 Everything looks good — try tapping Retry above', '#a6e3a1');
+    }
+
+  } catch(err) {
+    dbgLog('❌ Network error: ' + err.message, '#f38ba8');
+    if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+      dbgLog('  Possible causes:', '#fab387');
+      dbgLog('  1. You are opening the file as file:// — host it on a web server or GitHub Pages', '#fab387');
+      dbgLog('  2. No internet connection on this device', '#fab387');
+      dbgLog('  3. Apps Script deployment is not set to "Anyone" access', '#fab387');
+    }
+  }
+}
+// cache-busted so every device always gets fresh data
+// ═══════════════════════════════════════════════
+let autoSyncInterval  = null;
+let countdownInterval = null;
+let isSyncing         = false;
+const SYNC_EVERY_SEC  = 15;
 
 function startAutoSync() {
-  if (autoSyncInterval) clearInterval(autoSyncInterval);
+  if (autoSyncInterval)  clearInterval(autoSyncInterval);
+  if (countdownInterval) clearInterval(countdownInterval);
+
+  let countdown = SYNC_EVERY_SEC;
+
+  // Countdown ticker — updates sync bar label every second
+  countdownInterval = setInterval(() => {
+    const onLogPage = document.getElementById('page-log').classList.contains('active');
+    if (!isSyncing && !onLogPage) {
+      countdown--;
+      if (countdown <= 0) countdown = SYNC_EVERY_SEC;
+      const dot = document.getElementById('sync-dot');
+      if (dot && !dot.classList.contains('error') && !dot.classList.contains('syncing')) {
+        document.getElementById('sync-label').textContent =
+          `Synced ✓  Next sync in ${countdown}s`;
+      }
+    }
+  }, 1000);
+
+  // Actual sync interval
   autoSyncInterval = setInterval(async () => {
-    // Skip if user is on the log entry page (they may be typing hours)
     const onLogPage = document.getElementById('page-log').classList.contains('active');
     if (onLogPage || isSyncing) return;
+    countdown = SYNC_EVERY_SEC;
     await silentSync();
-  }, 30000); // 30 seconds
+  }, SYNC_EVERY_SEC * 1000);
+}
+
+// Shared function that parses log rows from sheet response into state.logs
+function parseLogRows(rows) {
+  state.logs = {};
+  if (!rows || !rows.length) return;
+  rows.forEach(row => {
+    const date    = String(row[0]||'').trim();
+    const empName = String(row[1]||'').trim();
+    const hours   = String(row[2]||'').trim();
+    const leave   = String(row[4]||'').trim(); // col 3 = Earning (skip)
+    if (!date || !empName) return;
+    if (!state.logs[date]) {
+      state.logs[date] = {};
+      EMPLOYEES.forEach(e => { state.logs[date][e.name] = { hours:'', leave:'' }; });
+    }
+    state.logs[date][empName] = { hours, leave };
+  });
 }
 
 async function silentSync() {
@@ -957,38 +1103,26 @@ async function silentSync() {
   isSyncing = true;
   setSyncStatus('syncing', 'Syncing...');
   try {
-    // Load employees
     const empRes = await apiCall({ action: 'loadEmployees' });
-    if (empRes && empRes.employees && empRes.employees.length > 0) {
+    if (empRes?.employees?.length > 0) {
       EMPLOYEES = empRes.employees.map(e => ({
-        name: String(e.name || '').trim(),
-        rate: parseFloat(e.rate) || 0
+        name: String(e.name||'').trim(),
+        rate: parseFloat(e.rate)||0
       }));
     }
-    // Load logs
     const logRes = await apiCall({ action: 'loadLogs' });
-    if (logRes && logRes.rows) {
-      state.logs = {};
-      logRes.rows.forEach(row => {
-        const date    = String(row[0] || '').trim();
-        const empName = String(row[1] || '').trim();
-        const hours   = String(row[2] || '').trim();
-        const leave   = String(row[4] || '').trim();
-        if (!date || !empName) return;
-        if (!state.logs[date]) {
-          state.logs[date] = {};
-          EMPLOYEES.forEach(e => { state.logs[date][e.name] = { hours:'', leave:'' }; });
-        }
-        state.logs[date][empName] = { hours, leave };
-      });
-    }
+    parseLogRows(logRes?.rows);
+
     setSyncStatus('ok', `Synced ✓  ${new Date().toLocaleTimeString()}`);
     renderCalendar();
-    // Re-render whichever page is active
     if (document.getElementById('page-report').classList.contains('active'))      renderReport();
     if (document.getElementById('page-report-list').classList.contains('active')) openReportList();
   } catch (err) {
-    setSyncStatus('error', 'Auto-sync failed — will retry in 30s');
+    console.error('silentSync error:', err);
+    const msg = err.message || 'Unknown error';
+    setSyncStatus('error', 'Sync failed — tap 🔍 to diagnose');
+    document.getElementById('error-detail').textContent = '⚠ ' + msg;
+    document.getElementById('error-banner').style.display = 'block';
   }
   isSyncing = false;
 }
