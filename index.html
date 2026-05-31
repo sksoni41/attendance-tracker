@@ -507,6 +507,76 @@ async function postCall(params) {
   catch(e) { console.error('Bad POST response:', text.substring(0,300)); throw new Error('Invalid response'); }
 }
 
+// ═══════════════════════════════════════════════
+// LOCAL CACHE — stores months already fetched
+// so switching between months is instant
+// ═══════════════════════════════════════════════
+const LOCAL_CACHE = {
+  get(monthKey)      { try { const v = localStorage.getItem('att_'+monthKey); return v ? JSON.parse(v) : null; } catch(e){ return null; } },
+  set(monthKey, data){ try { localStorage.setItem('att_'+monthKey, JSON.stringify(data)); } catch(e){} },
+  clear(monthKey)    { try { localStorage.removeItem('att_'+monthKey); } catch(e){} }
+};
+
+function monthKey(y, m) { return `${y}-${String(m+1).padStart(2,'0')}`; }
+
+// Merge loaded rows into state.logs (non-destructive — keeps other months intact)
+function mergeLogRows(rows) {
+  if (!rows || !rows.length) return;
+  rows.forEach(row => {
+    const date    = String(row[0]||'').trim();
+    const empName = String(row[1]||'').trim();
+    const hours   = String(row[2]||'').trim();
+    const leave   = String(row[4]||'').trim();
+    if (!date || !empName) return;
+    if (!state.logs[date]) {
+      state.logs[date] = {};
+      EMPLOYEES.forEach(e => { state.logs[date][e.name] = { hours:'', leave:'', _wasInSheet:false }; });
+    }
+    state.logs[date][empName] = { hours, leave, _wasInSheet: true };
+  });
+}
+
+// Load only a specific month from the sheet
+async function loadMonth(y, m) {
+  const mk   = monthKey(y, m);
+  const cached = LOCAL_CACHE.get(mk);
+  if (cached) {
+    // Use cached data immediately — show it fast
+    mergeLogRows(cached);
+    renderCalendar();
+    // Then refresh from sheet in background (silent)
+    refreshMonthInBackground(y, m, mk);
+    return;
+  }
+  // Not cached — fetch from sheet
+  await fetchMonthFromSheet(y, m, mk);
+}
+
+async function fetchMonthFromSheet(y, m, mk) {
+  try {
+    const logRes = await apiCall({ action:'loadLogs', month: mk });
+    const rows   = logRes?.rows || [];
+    LOCAL_CACHE.set(mk, rows);   // cache it
+    mergeLogRows(rows);
+    renderCalendar();
+  } catch(err) {
+    console.error('fetchMonth error:', err);
+    throw err;
+  }
+}
+
+async function refreshMonthInBackground(y, m, mk) {
+  try {
+    const logRes = await apiCall({ action:'loadLogs', month: mk });
+    const rows   = logRes?.rows || [];
+    LOCAL_CACHE.set(mk, rows);
+    mergeLogRows(rows);
+    renderCalendar();
+    if (document.getElementById('page-report').classList.contains('active')) renderReport();
+  } catch(e) { /* silent — cached data already shown */ }
+}
+
+// Full load on app open — employees + current month only
 async function loadAllFromSheets() {
   if (!SCRIPT_URL) {
     document.getElementById('setup-banner').style.display = 'block';
@@ -515,56 +585,62 @@ async function loadAllFromSheets() {
     renderCalendar();
     return;
   }
-  showLoading(true, 'Loading from Google Sheets...');
-  setSyncStatus('syncing', 'Loading from Google Sheets...');
+  showLoading(true, 'Loading...');
+  setSyncStatus('syncing', 'Loading...');
   document.getElementById('error-banner').style.display = 'none';
   try {
-    // Load employees
-    const empRes = await apiCall({ action: 'loadEmployees' });
+    // 1. Load employees (tiny — always fast)
+    const empRes = await apiCall({ action:'loadEmployees' });
     if (empRes.employees && empRes.employees.length > 0) {
-      EMPLOYEES = empRes.employees.map(e => ({ name: String(e.name||'').trim(), rate: parseFloat(e.rate)||0 }));
+      EMPLOYEES = empRes.employees.map(e => ({ name:String(e.name||'').trim(), rate:parseFloat(e.rate)||0 }));
     }
-    // Load logs
-    showLoading(true, 'Loading attendance logs...');
-    const logRes = await apiCall({ action: 'loadLogs' });
-    parseLogRows(logRes?.rows);
+    // 2. Load ONLY current month
+    showLoading(true, `Loading ${MONTHS[state.month]} ${state.year}...`);
+    await fetchMonthFromSheet(state.year, state.month, monthKey(state.year, state.month));
     setSyncStatus('ok', 'Synced ✓  ' + new Date().toLocaleTimeString());
   } catch(err) {
     console.error('loadAllFromSheets error:', err);
-    const msg = err.message || 'Unknown error';
-    setSyncStatus('error', 'Failed: ' + msg.substring(0,40));
-    document.getElementById('error-detail').textContent = '⚠ ' + msg;
+    setSyncStatus('error', 'Failed: ' + (err.message||'').substring(0,40));
+    document.getElementById('error-detail').textContent = '⚠ ' + (err.message||'Unknown error');
     document.getElementById('error-banner').style.display = 'block';
   }
   showLoading(false);
   renderCalendar();
 }
 
+// Save ONLY the current month's changed rows (not all data)
 async function saveAllToSheets() {
   if (!SCRIPT_URL) { alert('Please set up your Google Sheets Script URL first.'); return false; }
-  showLoading(true, 'Saving to Google Sheets...');
+  showLoading(true, 'Saving...');
   setSyncStatus('syncing', 'Saving...');
   try {
-    // Build rows — only dates that exist in state.logs
+    const mk   = monthKey(state.year, state.month);
     const rows = [];
-    Object.keys(state.logs).sort().forEach(dk => {
-      EMPLOYEES.forEach(emp => {
-        const l       = state.logs[dk] && state.logs[dk][emp.name];
-        if (!l) return;
-        const h       = getHours(l);
-        const isLeave = l.leave === 'leave';
-
-        if (h > 0 || isLeave) {
-          // Has real data — save it
-          rows.push([dk, emp.name, h || 0, Math.round(h * emp.rate), l.leave || '']);
-        } else if (l._wasInSheet) {
-          // Was in sheet before but now cleared — send blank so Apps Script deletes it
-          rows.push([dk, emp.name, '', '', '']);
-        }
+    Object.keys(state.logs)
+      .filter(dk => dk.startsWith(mk))   // ← only current month's dates
+      .sort()
+      .forEach(dk => {
+        EMPLOYEES.forEach(emp => {
+          const l = state.logs[dk] && state.logs[dk][emp.name];
+          if (!l) return;
+          const h       = getHours(l);
+          const isLeave = l.leave === 'leave';
+          if (h > 0 || isLeave) {
+            rows.push([dk, emp.name, h||0, Math.round(h * emp.rate), l.leave||'']);
+          } else if (l._wasInSheet) {
+            rows.push([dk, emp.name, '', '', '']); // delete signal
+          }
+        });
       });
-    });
-    await apiCall({ action: 'saveLogs', data: JSON.stringify(rows) });
-    await apiCall({ action: 'saveEmployees', data: JSON.stringify(EMPLOYEES.map(e => ({ name:e.name, rate:e.rate }))) });
+
+    // Send month filter so Apps Script only touches this month's rows
+    await apiCall({ action:'saveLogs', month: mk, data: JSON.stringify(rows) });
+    // Save employees
+    await apiCall({ action:'saveEmployees', data: JSON.stringify(EMPLOYEES.map(e=>({ name:e.name, rate:e.rate }))) });
+
+    // Invalidate cache for this month so next sync fetches fresh data
+    LOCAL_CACHE.clear(mk);
+
     setSyncStatus('ok', 'Saved ✓  ' + new Date().toLocaleTimeString());
     showLoading(false);
     return true;
@@ -1117,25 +1193,26 @@ async function silentSync() {
   isSyncing = true;
   setSyncStatus('syncing', 'Syncing...');
   try {
-    const empRes = await apiCall({ action: 'loadEmployees' });
+    // Refresh employees
+    const empRes = await apiCall({ action:'loadEmployees' });
     if (empRes?.employees?.length > 0) {
-      EMPLOYEES = empRes.employees.map(e => ({
-        name: String(e.name||'').trim(),
-        rate: parseFloat(e.rate)||0
-      }));
+      EMPLOYEES = empRes.employees.map(e => ({ name:String(e.name||'').trim(), rate:parseFloat(e.rate)||0 }));
     }
-    const logRes = await apiCall({ action: 'loadLogs' });
-    parseLogRows(logRes?.rows);
-
+    // Refresh ONLY current visible month
+    const mk     = monthKey(state.month < 0 ? state.year - 1 : state.year,
+                            ((state.month % 12) + 12) % 12);
+    const logRes = await apiCall({ action:'loadLogs', month: monthKey(state.year, state.month) });
+    const rows   = logRes?.rows || [];
+    LOCAL_CACHE.set(monthKey(state.year, state.month), rows);
+    mergeLogRows(rows);
     setSyncStatus('ok', `Synced ✓  ${new Date().toLocaleTimeString()}`);
     renderCalendar();
     if (document.getElementById('page-report').classList.contains('active'))      renderReport();
     if (document.getElementById('page-report-list').classList.contains('active')) openReportList();
   } catch (err) {
     console.error('silentSync error:', err);
-    const msg = err.message || 'Unknown error';
     setSyncStatus('error', 'Sync failed — tap 🔍 to diagnose');
-    document.getElementById('error-detail').textContent = '⚠ ' + msg;
+    document.getElementById('error-detail').textContent = '⚠ ' + (err.message||'');
     document.getElementById('error-banner').style.display = 'block';
   }
   isSyncing = false;
@@ -1160,17 +1237,23 @@ document.getElementById('save-btn').addEventListener('click', async () => {
     setTimeout(() => { toast.style.display = 'none'; }, 3000);
   }
 });
-document.getElementById('prev-month').addEventListener('click', () => {
-  state.month--; if(state.month<0){state.month=11;state.year--;} renderCalendar();
+document.getElementById('prev-month').addEventListener('click', async () => {
+  state.month--; if(state.month<0){state.month=11;state.year--;}
+  await loadMonth(state.year, state.month);
 });
-document.getElementById('next-month').addEventListener('click', () => {
-  state.month++; if(state.month>11){state.month=0;state.year++;} renderCalendar();
+document.getElementById('next-month').addEventListener('click', async () => {
+  state.month++; if(state.month>11){state.month=0;state.year++;}
+  await loadMonth(state.year, state.month);
 });
-document.getElementById('report-prev-month').addEventListener('click', () => {
-  reportState.month--; if(reportState.month<0){reportState.month=11;reportState.year--;} renderReport();
+document.getElementById('report-prev-month').addEventListener('click', async () => {
+  reportState.month--; if(reportState.month<0){reportState.month=11;reportState.year--;}
+  await loadMonth(reportState.year, reportState.month);
+  renderReport();
 });
-document.getElementById('report-next-month').addEventListener('click', () => {
-  reportState.month++; if(reportState.month>11){reportState.month=0;reportState.year++;} renderReport();
+document.getElementById('report-next-month').addEventListener('click', async () => {
+  reportState.month++; if(reportState.month>11){reportState.month=0;reportState.year++;}
+  await loadMonth(reportState.year, reportState.month);
+  renderReport();
 });
 
 // ═══════════════════════════════════════════════
