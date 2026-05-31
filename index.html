@@ -531,24 +531,22 @@ async function saveAllToSheets() {
   showLoading(true, 'Saving to Google Sheets...');
   setSyncStatus('syncing', 'Saving...');
   try {
+    // Build rows — only dates that exist in state.logs
     const rows = [];
     Object.keys(state.logs).sort().forEach(dk => {
       EMPLOYEES.forEach(emp => {
-        const l = state.logs[dk] && state.logs[dk][emp.name];
+        const l       = state.logs[dk] && state.logs[dk][emp.name];
         if (!l) return;
         const h       = getHours(l);
         const isLeave = l.leave === 'leave';
-        // Save the row if: hours > 0 OR on leave OR explicitly cleared
-        // We always send rows that have ANY record so sheet stays in sync
+
         if (h > 0 || isLeave) {
+          // Has real data — save it
           rows.push([dk, emp.name, h || 0, Math.round(h * emp.rate), l.leave || '']);
-        } else {
-          // hours = 0 and not on leave — send a blank row so Apps Script
-          // knows to DELETE this entry from the sheet
+        } else if (l._wasInSheet) {
+          // Was in sheet before but now cleared — send blank so Apps Script deletes it
           rows.push([dk, emp.name, '', '', '']);
         }
-      });
-    });
       });
     });
     await apiCall({ action: 'saveLogs', data: JSON.stringify(rows) });
@@ -581,7 +579,7 @@ function dateKey(y, m, d) { return `${y}-${String(m+1).padStart(2,'0')}-${String
 function initDayLogs(dk) {
   if (!state.logs[dk]) state.logs[dk] = {};
   EMPLOYEES.forEach(e => {
-    if (!state.logs[dk][e.name]) state.logs[dk][e.name] = { hours:'', leave:'' };
+    if (!state.logs[dk][e.name]) state.logs[dk][e.name] = { hours:'', leave:'', _wasInSheet: false };
   });
 }
 
@@ -727,15 +725,15 @@ function renderEmpRows(dk) {
 function toggleLeave(ini, empName) {
   const checked = document.getElementById(`ltog-${ini}`).checked;
   const dkc     = dateKey(selectedDate.y, selectedDate.m, selectedDate.d);
-  if (!state.logs[dkc]) state.logs[dkc] = {};
-  if (!state.logs[dkc][empName]) state.logs[dkc][empName] = { hours:'', leave:'' };
+  if (!state.logs[dkc])           state.logs[dkc] = {};
+  if (!state.logs[dkc][empName])  state.logs[dkc][empName] = { hours:'', leave:'', _wasInSheet: false };
 
+  // Preserve _wasInSheet flag so save knows to delete from sheet if cleared
   state.logs[dkc][empName].leave = checked ? 'leave' : '';
 
-  const row  = document.getElementById(`emprow-${ini}`);
+  const row   = document.getElementById(`emprow-${ini}`);
   const hwrap = document.getElementById(`hwrap-${ini}`);
   const hinp  = document.getElementById(`hinp-${ini}`);
-
   row.classList.toggle('on-leave', checked);
   hwrap.style.opacity       = checked ? '0.3' : '1';
   hwrap.style.pointerEvents = checked ? 'none' : '';
@@ -1080,7 +1078,7 @@ function startAutoSync() {
   }, SYNC_EVERY_SEC * 1000);
 }
 
-// Shared function that parses log rows from sheet response into state.logs
+// Shared parser — used by both loadAllFromSheets and silentSync
 function parseLogRows(rows) {
   state.logs = {};
   if (!rows || !rows.length) return;
@@ -1088,13 +1086,15 @@ function parseLogRows(rows) {
     const date    = String(row[0]||'').trim();
     const empName = String(row[1]||'').trim();
     const hours   = String(row[2]||'').trim();
-    const leave   = String(row[4]||'').trim(); // col 3 = Earning (skip)
+    const leave   = String(row[4]||'').trim();
     if (!date || !empName) return;
     if (!state.logs[date]) {
       state.logs[date] = {};
-      EMPLOYEES.forEach(e => { state.logs[date][e.name] = { hours:'', leave:'' }; });
+      EMPLOYEES.forEach(e => { state.logs[date][e.name] = { hours:'', leave:'', _wasInSheet: false }; });
     }
-    state.logs[date][empName] = { hours, leave };
+    // _wasInSheet = true means this row came from the sheet
+    // so if user clears it, we know to send a delete signal
+    state.logs[date][empName] = { hours, leave, _wasInSheet: true };
   });
 }
 
