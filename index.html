@@ -477,57 +477,86 @@ async function apiCall(params) {
   if (!SCRIPT_URL) throw new Error('No script URL');
   params._ts = Date.now();
 
-  // Apps Script requires GET with all params in URL
-  const url = SCRIPT_URL + '?' + new URLSearchParams(params).toString();
+  // For save actions that carry large data, POST via form to avoid URL length limits
+  // For load actions, GET is fine
+  const isSaveAction = params.action && params.action.startsWith('save');
 
-  // Try normal fetch first
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      redirect: 'follow',
-      cache: 'no-store'
-    });
-    const text = await res.text();
-    try {
-      return JSON.parse(text);
-    } catch(e) {
-      console.error('Bad JSON:', text.substring(0, 200));
-      throw new Error('Invalid JSON response from Apps Script');
-    }
-  } catch(fetchErr) {
-    // If normal fetch fails (CORS/network), fall back to JSONP-style via script tag
-    console.warn('fetch failed, trying script-tag fallback:', fetchErr.message);
-    return await jsonpCall(url);
+  if (isSaveAction) {
+    return await postCall(params);
+  } else {
+    return await getCall(params);
   }
 }
 
-// JSONP fallback — injects a <script> tag which bypasses CORS entirely
-function jsonpCall(url) {
+// GET call — for loading data
+async function getCall(params) {
+  const url = SCRIPT_URL + '?' + new URLSearchParams(params).toString();
+  try {
+    const res  = await fetch(url, { method: 'GET', redirect: 'follow', cache: 'no-store' });
+    const text = await res.text();
+    return JSON.parse(text);
+  } catch(e) {
+    // Fallback to JSONP if fetch fails (CORS issue)
+    return await jsonpCall(SCRIPT_URL, params);
+  }
+}
+
+// POST via hidden form — bypasses CORS and URL length limits for save actions
+function postCall(params) {
   return new Promise((resolve, reject) => {
-    const cbName = '_jsonp_' + Date.now();
-    const script  = document.createElement('script');
+    const cbName  = '_cb_' + Date.now();
     const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error('JSONP timeout — check your Script URL and deployment'));
-    }, 15000);
+      reject(new Error('Save timed out — check your Script URL'));
+    }, 20000);
+
+    // Listen for response via JSONP callback
+    window[cbName] = function(data) { cleanup(); resolve(data); };
 
     function cleanup() {
       clearTimeout(timeout);
       delete window[cbName];
-      if (script.parentNode) script.parentNode.removeChild(script);
+      const f = document.getElementById('_hidden_form');
+      if (f) f.remove();
+      const s = document.getElementById('_jsonp_script');
+      if (s) s.remove();
     }
 
-    window[cbName] = function(data) {
-      cleanup();
-      resolve(data);
-    };
+    // Build URL with callback — Apps Script will wrap response in callback()
+    const getParams = { action: params.action, _ts: params._ts, callback: cbName };
+    if (params.data) getParams.data = params.data;
 
-    // Apps Script supports ?callback= for JSONP
-    script.src = url + '&callback=' + cbName;
-    script.onerror = () => {
+    const script = document.createElement('script');
+    script.id = '_jsonp_script';
+    script.src = SCRIPT_URL + '?' + new URLSearchParams(getParams).toString();
+    script.onerror = () => { cleanup(); reject(new Error('Failed to reach Apps Script')); };
+    document.head.appendChild(script);
+  });
+}
+
+// JSONP GET — for load actions when fetch fails due to CORS
+function jsonpCall(baseUrl, params) {
+  return new Promise((resolve, reject) => {
+    const cbName  = '_cb_' + Date.now();
+    const timeout = setTimeout(() => {
       cleanup();
-      reject(new Error('Script load failed — check network or Script URL'));
-    };
+      reject(new Error('Request timed out'));
+    }, 15000);
+
+    window[cbName] = function(data) { cleanup(); resolve(data); };
+
+    function cleanup() {
+      clearTimeout(timeout);
+      delete window[cbName];
+      const s = document.getElementById('_jsonp_script_get');
+      if (s) s.remove();
+    }
+
+    const p = { ...params, callback: cbName };
+    const script = document.createElement('script');
+    script.id  = '_jsonp_script_get';
+    script.src = baseUrl + '?' + new URLSearchParams(p).toString();
+    script.onerror = () => { cleanup(); reject(new Error('Failed to reach Apps Script')); };
     document.head.appendChild(script);
   });
 }
