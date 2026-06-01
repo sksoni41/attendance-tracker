@@ -476,14 +476,12 @@ function showPage(id) {
 async function apiCall(params) {
   if (!SCRIPT_URL) throw new Error('No script URL');
   params._ts = Date.now();
-
   const isSave = params.action && params.action.startsWith('save');
   return isSave ? await postCall(params) : await getCall(params);
 }
 
-// GET — for loading (small response, no body needed)
 async function getCall(params) {
-  const url = SCRIPT_URL + '?' + new URLSearchParams(params).toString();
+  const url  = SCRIPT_URL + '?' + new URLSearchParams(params).toString();
   const res  = await fetch(url, { method:'GET', redirect:'follow', cache:'no-store' });
   const text = await res.text();
   const clean = text.replace(/^[^(]+\(/, '').replace(/\)\s*;?\s*$/, '').trim();
@@ -491,35 +489,41 @@ async function getCall(params) {
   catch(e) { console.error('Bad response:', text.substring(0,300)); throw new Error('Invalid response'); }
 }
 
-// POST — for saving (sends data in request body, no URL length limit)
 async function postCall(params) {
   const body = new URLSearchParams(params).toString();
   const res  = await fetch(SCRIPT_URL, {
-    method:   'POST',
-    redirect: 'follow',
-    cache:    'no-store',
-    headers:  { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body:     body
+    method:'POST', redirect:'follow', cache:'no-store',
+    headers:{ 'Content-Type':'application/x-www-form-urlencoded' }, body
   });
-  const text = await res.text();
+  const text  = await res.text();
   const clean = text.replace(/^[^(]+\(/, '').replace(/\)\s*;?\s*$/, '').trim();
   try { return JSON.parse(clean); }
   catch(e) { console.error('Bad POST response:', text.substring(0,300)); throw new Error('Invalid response'); }
 }
 
 // ═══════════════════════════════════════════════
-// LOCAL CACHE — stores months already fetched
-// so switching between months is instant
+// LOCAL CACHE
 // ═══════════════════════════════════════════════
 const LOCAL_CACHE = {
-  get(monthKey)      { try { const v = localStorage.getItem('att_'+monthKey); return v ? JSON.parse(v) : null; } catch(e){ return null; } },
-  set(monthKey, data){ try { localStorage.setItem('att_'+monthKey, JSON.stringify(data)); } catch(e){} },
-  clear(monthKey)    { try { localStorage.removeItem('att_'+monthKey); } catch(e){} }
+  get(k)    { try { const v = localStorage.getItem('att_'+k); return v ? JSON.parse(v) : null; } catch(e){ return null; } },
+  set(k, d) { try { localStorage.setItem('att_'+k, JSON.stringify(d)); } catch(e){} },
+  clear(k)  { try { localStorage.removeItem('att_'+k); } catch(e){} }
 };
+const EMP_CACHE_KEY = 'att_employees';
 
 function monthKey(y, m) { return `${y}-${String(m+1).padStart(2,'0')}`; }
 
-// Merge loaded rows into state.logs (non-destructive — keeps other months intact)
+// ═══════════════════════════════════════════════
+// DIRTY TRACKING — only save rows that changed
+// ═══════════════════════════════════════════════
+const dirtyKeys = new Set(); // "YYYY-MM-DD|EmpName"
+
+function markDirty(dk, empName) { dirtyKeys.add(dk + '|' + empName); }
+function clearDirty()           { dirtyKeys.clear(); }
+
+// ═══════════════════════════════════════════════
+// ROW PARSING
+// ═══════════════════════════════════════════════
 function mergeLogRows(rows) {
   if (!rows || !rows.length) return;
   rows.forEach(row => {
@@ -532,51 +536,14 @@ function mergeLogRows(rows) {
       state.logs[date] = {};
       EMPLOYEES.forEach(e => { state.logs[date][e.name] = { hours:'', leave:'', _wasInSheet:false }; });
     }
-    state.logs[date][empName] = { hours, leave, _wasInSheet: true };
+    state.logs[date][empName] = { hours, leave, _wasInSheet:true };
   });
 }
 
-// Load only a specific month from the sheet
-async function loadMonth(y, m) {
-  const mk   = monthKey(y, m);
-  const cached = LOCAL_CACHE.get(mk);
-  if (cached) {
-    // Use cached data immediately — show it fast
-    mergeLogRows(cached);
-    renderCalendar();
-    // Then refresh from sheet in background (silent)
-    refreshMonthInBackground(y, m, mk);
-    return;
-  }
-  // Not cached — fetch from sheet
-  await fetchMonthFromSheet(y, m, mk);
-}
-
-async function fetchMonthFromSheet(y, m, mk) {
-  try {
-    const logRes = await apiCall({ action:'loadLogs', month: mk });
-    const rows   = logRes?.rows || [];
-    LOCAL_CACHE.set(mk, rows);   // cache it
-    mergeLogRows(rows);
-    renderCalendar();
-  } catch(err) {
-    console.error('fetchMonth error:', err);
-    throw err;
-  }
-}
-
-async function refreshMonthInBackground(y, m, mk) {
-  try {
-    const logRes = await apiCall({ action:'loadLogs', month: mk });
-    const rows   = logRes?.rows || [];
-    LOCAL_CACHE.set(mk, rows);
-    mergeLogRows(rows);
-    renderCalendar();
-    if (document.getElementById('page-report').classList.contains('active')) renderReport();
-  } catch(e) { /* silent — cached data already shown */ }
-}
-
-// Full load on app open — employees + current month only
+// ═══════════════════════════════════════════════
+// LOAD — Optimization 3: show cache instantly,
+// fetch fresh data in background
+// ═══════════════════════════════════════════════
 async function loadAllFromSheets() {
   if (!SCRIPT_URL) {
     document.getElementById('setup-banner').style.display = 'block';
@@ -585,30 +552,98 @@ async function loadAllFromSheets() {
     renderCalendar();
     return;
   }
-  showLoading(true, 'Loading...');
-  setSyncStatus('syncing', 'Loading...');
   document.getElementById('error-banner').style.display = 'none';
+
+  // Step 1 — show cached data INSTANTLY (zero wait)
+  const cachedEmps = LOCAL_CACHE.get(EMP_CACHE_KEY);
+  const mk         = monthKey(state.year, state.month);
+  const cachedLogs = LOCAL_CACHE.get(mk);
+
+  if (cachedEmps) EMPLOYEES = cachedEmps;
+  if (cachedLogs) { mergeLogRows(cachedLogs); renderCalendar(); }
+
+  if (cachedEmps && cachedLogs) {
+    // Data shown instantly — now refresh silently in background
+    setSyncStatus('syncing', 'Checking for updates...');
+    showLoading(false);
+    _refreshInBackground(mk);
+    return;
+  }
+
+  // No cache — show loader and fetch
+  showLoading(true, `Loading ${MONTHS[state.month]} ${state.year}...`);
+  setSyncStatus('syncing', 'Loading...');
+  await _fetchFresh(mk);
+  showLoading(false);
+}
+
+// Optimization 1: single batched call for employees + logs
+async function _fetchFresh(mk) {
   try {
-    // 1. Load employees (tiny — always fast)
-    const empRes = await apiCall({ action:'loadEmployees' });
-    if (empRes.employees && empRes.employees.length > 0) {
-      EMPLOYEES = empRes.employees.map(e => ({ name:String(e.name||'').trim(), rate:parseFloat(e.rate)||0 }));
+    // Single call that returns both employees and logs
+    const res = await apiCall({ action:'loadInit', month: mk });
+    if (res.employees && res.employees.length > 0) {
+      EMPLOYEES = res.employees.map(e => ({ name:String(e.name||'').trim(), rate:parseFloat(e.rate)||0 }));
+      LOCAL_CACHE.set(EMP_CACHE_KEY, EMPLOYEES);
     }
-    // 2. Load ONLY current month
-    showLoading(true, `Loading ${MONTHS[state.month]} ${state.year}...`);
-    await fetchMonthFromSheet(state.year, state.month, monthKey(state.year, state.month));
+    const rows = res.rows || [];
+    LOCAL_CACHE.set(mk, rows);
+    mergeLogRows(rows);
     setSyncStatus('ok', 'Synced ✓  ' + new Date().toLocaleTimeString());
+    renderCalendar();
   } catch(err) {
-    console.error('loadAllFromSheets error:', err);
+    console.error('_fetchFresh error:', err);
     setSyncStatus('error', 'Failed: ' + (err.message||'').substring(0,40));
     document.getElementById('error-detail').textContent = '⚠ ' + (err.message||'Unknown error');
     document.getElementById('error-banner').style.display = 'block';
+    renderCalendar();
   }
-  showLoading(false);
-  renderCalendar();
 }
 
-// Save ONLY the current month's changed rows (not all data)
+async function _refreshInBackground(mk) {
+  try {
+    const res = await apiCall({ action:'loadInit', month: mk });
+    if (res.employees && res.employees.length > 0) {
+      EMPLOYEES = res.employees.map(e => ({ name:String(e.name||'').trim(), rate:parseFloat(e.rate)||0 }));
+      LOCAL_CACHE.set(EMP_CACHE_KEY, EMPLOYEES);
+    }
+    const rows = res.rows || [];
+    LOCAL_CACHE.set(mk, rows);
+    mergeLogRows(rows);
+    setSyncStatus('ok', 'Synced ✓  ' + new Date().toLocaleTimeString());
+    renderCalendar();
+    if (document.getElementById('page-report').classList.contains('active'))      renderReport();
+    if (document.getElementById('page-report-list').classList.contains('active')) openReportList();
+  } catch(e) { setSyncStatus('error', 'Background sync failed'); }
+}
+
+async function loadMonth(y, m) {
+  const mk     = monthKey(y, m);
+  const cached = LOCAL_CACHE.get(mk);
+  if (cached) {
+    mergeLogRows(cached);
+    renderCalendar();
+    _refreshMonthOnly(y, m, mk); // silent background refresh
+    return;
+  }
+  setSyncStatus('syncing', `Loading ${MONTHS[m]}...`);
+  await _fetchFresh(mk);
+}
+
+async function _refreshMonthOnly(y, m, mk) {
+  try {
+    const logRes = await apiCall({ action:'loadLogs', month: mk });
+    const rows   = logRes?.rows || [];
+    LOCAL_CACHE.set(mk, rows);
+    mergeLogRows(rows);
+    renderCalendar();
+    if (document.getElementById('page-report').classList.contains('active')) renderReport();
+  } catch(e) { /* silent */ }
+}
+
+// ═══════════════════════════════════════════════
+// SAVE — Optimization 2: only send dirty rows
+// ═══════════════════════════════════════════════
 async function saveAllToSheets() {
   if (!SCRIPT_URL) { alert('Please set up your Google Sheets Script URL first.'); return false; }
   showLoading(true, 'Saving...');
@@ -616,31 +651,38 @@ async function saveAllToSheets() {
   try {
     const mk   = monthKey(state.year, state.month);
     const rows = [];
+
     Object.keys(state.logs)
-      .filter(dk => dk.startsWith(mk))   // ← only current month's dates
+      .filter(dk => dk.startsWith(mk))
       .sort()
       .forEach(dk => {
         EMPLOYEES.forEach(emp => {
-          const l = state.logs[dk] && state.logs[dk][emp.name];
+          const rowKey = dk + '|' + emp.name;
+          const l      = state.logs[dk] && state.logs[dk][emp.name];
           if (!l) return;
+
+          // Optimization 2: skip rows that haven't changed
+          if (!dirtyKeys.has(rowKey) && !l._wasInSheet) return;
+
           const h       = getHours(l);
           const isLeave = l.leave === 'leave';
           if (h > 0 || isLeave) {
             rows.push([dk, emp.name, h||0, Math.round(h * emp.rate), l.leave||'']);
-          } else if (l._wasInSheet) {
+          } else if (l._wasInSheet || dirtyKeys.has(rowKey)) {
             rows.push([dk, emp.name, '', '', '']); // delete signal
           }
         });
       });
 
-    // Send month filter so Apps Script only touches this month's rows
-    await apiCall({ action:'saveLogs', month: mk, data: JSON.stringify(rows) });
-    // Save employees
-    await apiCall({ action:'saveEmployees', data: JSON.stringify(EMPLOYEES.map(e=>({ name:e.name, rate:e.rate }))) });
+    // Run logs + employees save in parallel (Optimization 1)
+    await Promise.all([
+      apiCall({ action:'saveLogs',      month:mk, data:JSON.stringify(rows) }),
+      apiCall({ action:'saveEmployees',           data:JSON.stringify(EMPLOYEES.map(e=>({ name:e.name, rate:e.rate }))) })
+    ]);
 
-    // Invalidate cache for this month so next sync fetches fresh data
+    clearDirty();
     LOCAL_CACHE.clear(mk);
-
+    LOCAL_CACHE.set(EMP_CACHE_KEY, EMPLOYEES);
     setSyncStatus('ok', 'Saved ✓  ' + new Date().toLocaleTimeString());
     showLoading(false);
     return true;
@@ -804,8 +846,9 @@ function renderEmpRows(dk) {
       const val = e.target.value;
       const dkc = dateKey(selectedDate.y, selectedDate.m, selectedDate.d);
       if (!state.logs[dkc]) state.logs[dkc] = {};
-      if (!state.logs[dkc][emp.name]) state.logs[dkc][emp.name] = { hours:'', leave:'' };
+      if (!state.logs[dkc][emp.name]) state.logs[dkc][emp.name] = { hours:'', leave:'', _wasInSheet:false };
       state.logs[dkc][emp.name].hours = val;
+      markDirty(dkc, emp.name);
       const hrs = parseFloat(val) || 0;
       document.getElementById(`earn-${ini}`).textContent = hrs > 0 ? '₹' + Math.round(hrs * emp.rate).toLocaleString('en-IN') : '';
     });
@@ -816,11 +859,9 @@ function toggleLeave(ini, empName) {
   const checked = document.getElementById(`ltog-${ini}`).checked;
   const dkc     = dateKey(selectedDate.y, selectedDate.m, selectedDate.d);
   if (!state.logs[dkc])           state.logs[dkc] = {};
-  if (!state.logs[dkc][empName])  state.logs[dkc][empName] = { hours:'', leave:'', _wasInSheet: false };
-
-  // Preserve _wasInSheet flag so save knows to delete from sheet if cleared
+  if (!state.logs[dkc][empName])  state.logs[dkc][empName] = { hours:'', leave:'', _wasInSheet:false };
   state.logs[dkc][empName].leave = checked ? 'leave' : '';
-
+  markDirty(dkc, empName);
   const row   = document.getElementById(`emprow-${ini}`);
   const hwrap = document.getElementById(`hwrap-${ini}`);
   const hinp  = document.getElementById(`hinp-${ini}`);
