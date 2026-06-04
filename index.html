@@ -10,13 +10,15 @@
 
   body {
     font-family: Arial, sans-serif;
-    background: #fff;
-    min-height: 100vh;
+    background: #f0f4f8;
     display: flex;
     justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 0;
   }
 
-  /* Always full width — no max-width cap on any screen */
+  /* Mobile: full edge-to-edge, no padding, no border-radius */
   .app {
     width: 100%;
     max-width: 100%;
@@ -27,100 +29,80 @@
     position: relative;
   }
 
-  /* Tablet 600px+ — bigger fonts, bigger spacing */
+  /* Tablet (600px+): centered card with padding and rounded corners */
   @media (min-width: 600px) {
-    body { font-size: 16px; }
-    .topbar { padding: 20px 32px; }
-    .topbar h1 { font-size: 22px; }
-    .topbar .back-btn { width: 38px; height: 38px; font-size: 22px; }
-    .cal-nav { padding: 20px 32px; }
-    .cal-nav span { font-size: 20px; }
-    .cal-nav button { width: 44px; height: 44px; font-size: 24px; }
-    .cal-grid { padding: 0 28px 20px; }
-    .day-label { font-size: 15px; padding: 8px 0; }
-    .cal-day { padding: 14px 4px; font-size: 17px; }
-    .cal-day.has-data::after { width: 7px; height: 7px; }
-    .legend { padding: 0 32px 16px; gap: 24px; }
-    .legend-item { font-size: 14px; }
-    .dot { width: 10px; height: 10px; }
-    .stats-section { margin: 0 28px 24px; }
-    .stats-header h3 { font-size: 14px; }
-    .stats-bar { padding: 16px; }
-    .emp-stat { padding: 10px 0; }
-    .emp-name-s { font-size: 17px; }
-    .emp-meta { font-size: 14px; }
-    .emp-earning { font-size: 17px; }
-    .manage-btn { font-size: 14px; padding: 9px 16px; }
-    .sync-bar { padding: 11px 24px; font-size: 14px; }
-    .sync-dot { width: 10px; height: 10px; }
-    .log-header { padding: 18px 32px; }
-    .log-date { font-size: 15px; }
-    .log-title { font-size: 20px; }
-    .emp-row { padding: 18px 32px; }
-    .avatar { width: 48px; height: 48px; font-size: 16px; }
-    .emp-label { font-size: 19px; }
-    .leave-toggle-label { font-size: 15px; }
-    .toggle-switch { width: 54px; height: 30px; }
-    .toggle-slider:before { width: 22px; height: 22px; }
-    .toggle-switch input:checked + .toggle-slider:before { transform: translateX(24px); }
-    .hours-input-wrap { margin-top: 10px; gap: 16px; }
-    .hours-input-wrap label { font-size: 16px; }
-    .hours-input-wrap input { width: 130px; font-size: 22px; padding: 12px 14px; }
-    .earning-badge { font-size: 16px; }
-    .save-btn { margin: 20px 32px; width: calc(100% - 64px); font-size: 18px; padding: 16px; border-radius: 12px; }
-    .saved-toast { margin: 0 32px 18px; font-size: 15px; padding: 12px; }
-    .emp-card { margin: 14px 28px; }
-    .emp-card-header { padding: 16px 18px; }
-    .emp-card-avatar { width: 48px; height: 48px; font-size: 15px; }
-    .emp-card-name { font-size: 18px; }
-    .edit-btn { width: 36px; height: 36px; font-size: 18px; }
-    .delete-btn { width: 36px; height: 36px; font-size: 18px; }
-    .emp-card-body { padding: 14px 18px; }
-    .rate-info { font-size: 14px; }
-    .rate-value { font-size: 18px; }
-    .edit-form input { font-size: 16px; padding: 10px 12px; }
-    .edit-form label { font-size: 13px; }
-    .btn-save-edit { font-size: 15px; padding: 11px; }
-    .btn-cancel-edit { font-size: 15px; padding: 11px; }
-    .add-emp-section { margin: 14px 28px 24px; }
-    .add-emp-toggle { font-size: 16px; padding: 14px; }
-    .add-emp-form { padding: 18px; }
-    .add-emp-form input { font-size: 16px; padding: 10px 12px; }
-    .add-emp-form label { font-size: 14px; }
-    .btn-add-confirm { font-size: 16px; padding: 13px; }
-    .report-summary { margin: 18px 28px 14px; gap: 12px; }
-    .report-summary-card { padding: 14px 8px; border-radius: 12px; }
-    .report-summary-val { font-size: 22px; }
-    .report-summary-lbl { font-size: 12px; }
-    .report-table-wrap { margin: 0 28px 24px; }
-    .report-table { font-size: 15px; }
-    .report-table thead th { font-size: 14px; padding: 12px 16px; }
-    .report-table tbody td { padding: 12px 16px; font-size: 15px; }
-    .emp-select-list { padding: 16px 28px 24px; }
-    .emp-select-card { padding: 16px 18px; margin-bottom: 12px; }
-    .emp-select-avatar { width: 54px; height: 54px; font-size: 17px; }
-    .emp-select-name { font-size: 18px; }
-    .emp-select-meta { font-size: 14px; }
-    .emp-select-arrow { font-size: 24px; }
-    .report-topbar-sub { padding: 16px 32px; }
-    .report-emp-name { font-size: 20px; }
-    .report-month-nav span { font-size: 16px; min-width: 110px; }
-    .report-month-nav button { width: 34px; height: 34px; font-size: 20px; }
-    .setup-banner { margin: 20px 28px; font-size: 15px; line-height: 1.7; }
-    .setup-banner input { font-size: 14px; padding: 10px 12px; }
-    .setup-banner button { font-size: 15px; padding: 11px; }
-    .error-banner { margin: 0 28px 16px; font-size: 14px; }
-    .loading-msg { font-size: 16px; }
-    .spinner { width: 40px; height: 40px; }
+    body {
+      padding: 24px 16px;
+      align-items: flex-start;
+    }
+    .app {
+      max-width: 600px;
+      min-height: unset;
+      border-radius: 16px;
+      border: 1px solid #e0e0e0;
+    }
   }
 
-  /* Large tablet / desktop — two column employee grid */
-  @media (min-width: 768px) {
+  /* Desktop (900px+): wider card */
+  @media (min-width: 900px) {
+    body { padding: 32px 16px; }
+    .app { max-width: 780px; }
+
+    /* Two-column layout for log page on desktop */
     #emp-rows { display: grid; grid-template-columns: 1fr 1fr; }
     #emp-rows .emp-row { border-right: 1px solid #eee; }
     #emp-rows .emp-row:nth-child(even) { border-right: none; }
+
+    /* Wider calendar day cells on desktop */
+    .cal-day { padding: 10px 4px; font-size: 14px; }
+
+    /* Report table font bump */
+    .report-table { font-size: 13px; }
+    .report-table thead th { font-size: 12px; padding: 10px 14px; }
+    .report-table tbody td { padding: 10px 14px; }
+
+    /* Wider stats cards */
     .report-summary { grid-template-columns: repeat(4, 1fr); }
-    .cal-day { font-size: 18px; padding: 16px 4px; }
+  }
+
+  /* TOP BAR */
+  .topbar { background: #185FA5; padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
+  .topbar h1 { color: #fff; font-size: 16px; font-weight: 500; flex: 1; }
+  .topbar .back-btn { background: rgba(255,255,255,0.2); border: none; border-radius: 6px; color: #fff; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; }
+  @media (min-width: 600px) {
+    .topbar { padding: 16px 24px; }
+    .topbar h1 { font-size: 18px; }
+    .cal-nav { padding: 16px 24px; }
+    .cal-grid { padding: 0 20px 16px; }
+    .legend { padding: 0 24px 14px; }
+    .stats-section { margin: 0 20px 20px; }
+    .log-header { padding: 14px 24px; }
+    .emp-row { padding: 14px 24px; }
+    .save-btn { margin: 16px 24px; width: calc(100% - 48px); }
+    .saved-toast { margin: 0 24px 16px; }
+    .emp-card { margin: 10px 20px; }
+    .add-emp-section { margin: 10px 20px 20px; }
+    .setup-banner { margin: 16px 20px; }
+    .error-banner { margin: 0 20px 14px; }
+    .report-summary { margin: 14px 20px 10px; }
+    .report-table-wrap { margin: 0 20px 20px; }
+    .emp-select-list { padding: 12px 20px 20px; }
+    .report-topbar-sub { padding: 12px 24px; }
+  }
+  @media (min-width: 900px) {
+    .topbar { padding: 18px 32px; }
+    .cal-nav { padding: 18px 32px; }
+    .cal-grid { padding: 0 28px 18px; }
+    .legend { padding: 0 32px 16px; }
+    .stats-section { margin: 0 28px 24px; }
+    .log-header { padding: 16px 32px; }
+    .save-btn { margin: 18px 32px; width: calc(100% - 64px); }
+    .saved-toast { margin: 0 32px 18px; }
+    .emp-card { margin: 10px 28px; }
+    .add-emp-section { margin: 10px 28px 24px; }
+    .report-summary { margin: 16px 28px 12px; }
+    .report-table-wrap { margin: 0 28px 24px; }
+    .emp-select-list { padding: 14px 28px 24px; }
   }
 
   /* SYNC BAR */
@@ -292,7 +274,7 @@
   <div class="page active" id="page-cal">
     <div class="topbar">
       <i class="ti ti-calendar" style="color:#fff;font-size:20px"></i>
-      <h1>Attendance Tracker</h1>
+      <h1>MAA Gayatri Hosiery</h1>
     </div>
     <div class="sync-bar" id="sync-bar-btn" style="cursor:pointer" title="Tap to sync now">
       <div class="sync-dot syncing" id="sync-dot"></div>
@@ -459,6 +441,14 @@ let EMPLOYEES = [
 
 // logs shape: { "YYYY-MM-DD": { "Emp Name": { hours: "8", leave: "" } } }
 // leave: "" = present/absent, "leave" = on leave
+// ═══════════════════════════════════════════════
+const MONTHS    = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DAYS      = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+const DAYS_SHORT= ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+// logs shape: { "YYYY-MM-DD": { "Emp Name": { hours: "8", leave: "", leaveType: "" } } }
+// leave: "" = present, "leave" = on leave
+// leaveType: "CL" | "SL" | "PL"
 let state = { month: new Date().getMonth(), year: new Date().getFullYear(), logs: {} };
 let selectedDate  = null;
 let reportState   = { empIndex: 0, month: new Date().getMonth(), year: new Date().getFullYear() };
@@ -731,10 +721,7 @@ function getHours(log) {
   return isNaN(h) || h < 0 ? 0 : h;
 }
 
-function initials(name) {
-  if (!name) return '?';
-  return name.trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().substring(0, 2);
-}
+function initials(name) { return name.split(' ').map(w => w[0]).join('').toUpperCase(); }
 
 // ═══════════════════════════════════════════════
 // CALENDAR
@@ -938,12 +925,10 @@ async function saveEdit(idx) {
   if (!newName || isNaN(newRate) || newRate < 0) { alert('Please enter a valid name and rate.'); return; }
   const oldName = EMPLOYEES[idx].name;
   EMPLOYEES[idx] = { name: newName, rate: newRate };
-  // Rename all log entries and mark them dirty so they get saved
   Object.keys(state.logs).forEach(dk => {
     if (state.logs[dk][oldName] !== undefined) {
-      state.logs[dk][newName] = { ...state.logs[dk][oldName], _wasInSheet: true };
+      state.logs[dk][newName] = state.logs[dk][oldName];
       if (oldName !== newName) delete state.logs[dk][oldName];
-      markDirty(dk, newName);
     }
   });
   await saveAllToSheets();
@@ -966,16 +951,8 @@ function startDelete(idx) {
 async function confirmDelete(idx) {
   const name = EMPLOYEES[idx].name;
   EMPLOYEES.splice(idx, 1);
-  // Mark all existing log entries for this employee as blank (delete signal)
-  Object.keys(state.logs).forEach(dk => {
-    if (state.logs[dk][name]) {
-      state.logs[dk][name] = { hours:'', leave:'', _wasInSheet: true };
-      markDirty(dk, name);
-    }
-  });
-  await saveAllToSheets();
-  // Now remove from state after saving
   Object.keys(state.logs).forEach(dk => { delete state.logs[dk][name]; });
+  await saveAllToSheets();
   renderManagePage();
   renderCalendar();
 }
@@ -988,7 +965,6 @@ document.getElementById('btn-add-confirm').addEventListener('click', async () =>
   const rate = parseFloat(document.getElementById('new-emp-rate').value);
   if (!name || isNaN(rate) || rate < 0) { alert('Please enter a valid name and hourly rate.'); return; }
   EMPLOYEES.push({ name, rate });
-  LOCAL_CACHE.clear(EMP_CACHE_KEY); // force fresh employee load on next sync
   await saveAllToSheets();
   renderManagePage();
   renderCalendar();
@@ -1083,7 +1059,7 @@ function renderReport() {
       <div class="report-summary-lbl">Leave Days</div>
     </div>
     <div class="report-summary-card">
-      <div class="report-summary-val">₹${earning >= 1000 ? (Math.round(earning/1000)+'k') : Math.round(earning)}</div>
+      <div class="report-summary-val">₹${Math.round(earning/1000)}k</div>
       <div class="report-summary-lbl">Earned</div>
     </div>`;
 }
@@ -1197,8 +1173,7 @@ async function showDebugPanel() {
     }
   }
 }
-// ═══════════════════════════════════════════════
-// AUTO-SYNC — polls every 15 seconds
+// cache-busted so every device always gets fresh data
 // ═══════════════════════════════════════════════
 let autoSyncInterval  = null;
 let countdownInterval = null;
@@ -1234,24 +1209,42 @@ function startAutoSync() {
   }, SYNC_EVERY_SEC * 1000);
 }
 
-// Shared parser — mergeLogRows is the canonical one above.
-// This stub kept for safety in case anything calls it.
-function parseLogRows(rows) { mergeLogRows(rows); }
+// Shared parser — used by both loadAllFromSheets and silentSync
+function parseLogRows(rows) {
+  state.logs = {};
+  if (!rows || !rows.length) return;
+  rows.forEach(row => {
+    const date    = String(row[0]||'').trim();
+    const empName = String(row[1]||'').trim();
+    const hours   = String(row[2]||'').trim();
+    const leave   = String(row[4]||'').trim();
+    if (!date || !empName) return;
+    if (!state.logs[date]) {
+      state.logs[date] = {};
+      EMPLOYEES.forEach(e => { state.logs[date][e.name] = { hours:'', leave:'', _wasInSheet: false }; });
+    }
+    // _wasInSheet = true means this row came from the sheet
+    // so if user clears it, we know to send a delete signal
+    state.logs[date][empName] = { hours, leave, _wasInSheet: true };
+  });
+}
 
 async function silentSync() {
   if (!SCRIPT_URL || isSyncing) return;
   isSyncing = true;
   setSyncStatus('syncing', 'Syncing...');
   try {
-    // Single batched call — employees + current month logs together
-    const mk  = monthKey(state.year, state.month);
-    const res = await apiCall({ action:'loadInit', month: mk });
-    if (res?.employees?.length > 0) {
-      EMPLOYEES = res.employees.map(e => ({ name:String(e.name||'').trim(), rate:parseFloat(e.rate)||0 }));
-      LOCAL_CACHE.set(EMP_CACHE_KEY, EMPLOYEES);
+    // Refresh employees
+    const empRes = await apiCall({ action:'loadEmployees' });
+    if (empRes?.employees?.length > 0) {
+      EMPLOYEES = empRes.employees.map(e => ({ name:String(e.name||'').trim(), rate:parseFloat(e.rate)||0 }));
     }
-    const rows = res?.rows || [];
-    LOCAL_CACHE.set(mk, rows);
+    // Refresh ONLY current visible month
+    const mk     = monthKey(state.month < 0 ? state.year - 1 : state.year,
+                            ((state.month % 12) + 12) % 12);
+    const logRes = await apiCall({ action:'loadLogs', month: monthKey(state.year, state.month) });
+    const rows   = logRes?.rows || [];
+    LOCAL_CACHE.set(monthKey(state.year, state.month), rows);
     mergeLogRows(rows);
     setSyncStatus('ok', `Synced ✓  ${new Date().toLocaleTimeString()}`);
     renderCalendar();
